@@ -1,5 +1,5 @@
 ﻿<dotnetnuke type="Package" version="5.0">
-  <packages><package name="40Fingers.PortalList" type="Module" version="01.06.01">
+  <packages><package name="40Fingers.PortalList" type="Module" version="01.06.02">
   <friendlyName>40Fingers PortalList</friendlyName>
   <description>
 	<![CDATA[
