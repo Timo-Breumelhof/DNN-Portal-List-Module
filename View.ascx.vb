@@ -41,12 +41,13 @@ Public Class View
 #Region "Functions and Subs"
 
 
+    ' Builds the HTML output for all visible portals, grouped by category when category filters are configured.
     Private Function GetPortals() As String
 
         Dim sPortals As String = ""
         Dim Portals As ArrayList
 
-
+        ' Default to 5000 as a practical upper bound; DNN's GetPortalsByName requires a page size
         Dim iMaxPortals As Integer = 5000
         If objConfig.MaxPortals > 0 Then iMaxPortals = objConfig.MaxPortals
 
@@ -63,6 +64,7 @@ Public Class View
 
         Dim oCatFilters As New CategoryFilters(objConfig.CategoryFilter)
 
+        ' "All" bucket collects every portal regardless of category; per-category buckets are used when categories are configured
         Dim dictPortals As New Dictionary(Of String, String)
         dictPortals.Add("All", "")
 
@@ -100,6 +102,7 @@ Public Class View
             'Sort the arraylist
             alSortPortals.Sort()
 
+            ' CompareTo is implemented descending, so ASC requires an extra Reverse()
             If objConfig.SortDirection = SortOrderType.ASC Then
                 alSortPortals.Reverse()
             End If
@@ -132,7 +135,18 @@ Public Class View
             Dim sSkinSrc As String = String.Empty
 
 
-            sSkinSrc = PortalController.GetPortalSetting("DefaultPortalSkin", oPortal.PortalID, "")
+            ' Use the portal's own default language, not the host portal's thread culture,
+            ' to avoid matching stale DB entries for deleted locales with the wrong skin.
+            sSkinSrc = PortalController.GetPortalSetting("DefaultPortalSkin", oPortal.PortalID, "", oPortal.DefaultLanguage)
+            If sSkinSrc = "" Then
+                ' Fallback: try each active locale (covers portals whose default language has no entry)
+                For Each kvp As KeyValuePair(Of String, Locale) In LocaleController.Instance.GetLocales(oPortal.PortalID)
+                    sSkinSrc = PortalController.GetPortalSetting("DefaultPortalSkin", oPortal.PortalID, "", kvp.Key)
+                    If sSkinSrc <> "" Then Exit For
+                Next
+            End If
+
+            Dim SkinSrcFrom As String = "Portal Theme:" & oPortal.PortalID.ToString()
 
             'Get First page skin
             If oPortal.HomeTabId > 0 Then
@@ -153,6 +167,7 @@ Public Class View
 
                     If oTab.SkinSrc.Trim > "" Then
                         sSkinSrc = oTab.SkinSrc
+                        SkinSrcFrom = "Tab Theme:" & oTab.TabID
                     End If
 
                 Catch ex As Exception
@@ -161,16 +176,9 @@ Public Class View
 
             End If
 
-            'What if there is no home page? Add code to get the skin of the first page of the portal
+            'What if there is no home page set? Add code to get the skin of the first page of the portal
             Dim sIconFilename As String = GetSkinImage(sSkinSrc, oPortal)
 
-            If Not sIconFilename = String.Empty Then
-
-                If objConfig.ScaleImages Then
-                    sIconFilename = SaveImage(sIconFilename, objConfig.IconPath.Replace("[P]", PortalSettings.HomeDirectory), objConfig.ImgWidth, objConfig.ImgHeight, String.Format("P{0:000}_", oPortal.PortalID))
-                End If
-
-            End If
 
 
             If homePageAccessibleToAllUsers Or DotNetNuke.Security.Permissions.TabPermissionController.CanAddContentToPage Then
@@ -185,6 +193,10 @@ Public Class View
                 sPortalTemplate = sPortalTemplate.Replace("[PortalFooterText]", oPortal.FooterText)
                 sPortalTemplate = sPortalTemplate.Replace("[PortalDescription]", oPortal.Description)
                 sPortalTemplate = sPortalTemplate.Replace("[PortalId]", oPortal.PortalID)
+                sPortalTemplate = sPortalTemplate.Replace("[SkinSrc]", sSkinSrc)
+                sPortalTemplate = sPortalTemplate.Replace("[SkinSrcFrom]", SkinSrcFrom)
+
+
 
                 dictPortals("All") &= sPortalTemplate
                 dictPortals(tempSortPortal.Category) &= sPortalTemplate
@@ -277,10 +289,11 @@ Public Class View
                     strFirstAlias = objPortalAliasInfo.HTTPAlias
                 End If
 
-                'Check if the Portal Alias is a Child of the  Portal Alias the Module is on.
+                ' Child-portal alias (e.g. host/childsite) takes priority over the default alias
+                ' because linking to the root domain would land on the wrong portal
                 If objPortalAliasInfo.HTTPAlias.StartsWith(strModuleAlias & "/") Then
                     strReturnAlias = objPortalAliasInfo.HTTPAlias
-                    Exit For ' Exit as the fact that this is a Child - Alias of the Current Portal is more important than the fact that this PortalAlias is the default Alias.
+                    Exit For
                 End If
 
                 'Test if this is the default Portal Alias
@@ -332,6 +345,10 @@ Public Class View
 
         If sFileName = "" Then
             'Get the portal skin
+            Dim portalSkinSource = SkinController.FormatSkinSrc(SkinController.GetDefaultPortalSkin(), PortalSettings)
+            sFileName = portalSkinSource
+
+
         End If
 
         sFileName = sFileName.Replace("[G]", "/Portals/_Default/")
@@ -542,6 +559,7 @@ Public Class View
             Return True
         End If
 
+        ' XOR: passesFilters=True + FilterInclude=True → allow; passesFilters=True + FilterInclude=False (exclude mode) → deny
         Return (Not (passesFilters Xor objConfig.FilterInclude))
 
     End Function
